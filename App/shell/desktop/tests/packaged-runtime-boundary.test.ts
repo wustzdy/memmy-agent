@@ -9,6 +9,7 @@ const devStartPath = fileURLToPath(new URL("../../../../scripts/dev-start.sh", i
 const devMemorySupervisorPath = fileURLToPath(new URL("../../../../scripts/internal/dev-memory-supervisor.mjs", import.meta.url));
 const clearAllPath = fileURLToPath(new URL("../../../../scripts/clear-all.sh", import.meta.url));
 const packageMacDmgPath = fileURLToPath(new URL("../../../../scripts/internal/package-mac-dmg.sh", import.meta.url));
+const writePackagedEnvPath = fileURLToPath(new URL("../../../../scripts/internal/write-packaged-env.mjs", import.meta.url));
 const signedMacArm64PackagePath = fileURLToPath(
   new URL("../../../../scripts/internal/package-mac-arm64-signed-base.sh", import.meta.url)
 );
@@ -949,7 +950,7 @@ describe("desktop packaged runtime boundaries", () => {
     expect(source).not.toContain("mv -f");
   });
 
-  it("bundles the repo-root .env so packaged apps can resolve MEMMY_CLOUD_SERVICE", () => {
+  it("bundles a generated packaged env that excludes GA4 API secrets", () => {
     const configs = [
       readFileSync(electronBuilderPath, "utf8"),
       readFileSync(unsignedElectronBuilderPath, "utf8"),
@@ -958,9 +959,19 @@ describe("desktop packaged runtime boundaries", () => {
     ];
 
     for (const config of configs) {
-      expect(config).toContain("from: ../../../.env");
+      expect(config).toContain("from: dist/packaged.env");
       expect(config).toContain("to: .env");
+      expect(config).not.toContain("from: ../../../.env");
     }
+
+    for (const scriptPath of [packageMacDmgPath, packageWinX64Path]) {
+      const source = readFileSync(scriptPath, "utf8");
+      expect(source).toContain('node "$ROOT_DIR/scripts/internal/write-packaged-env.mjs" "$ROOT_DIR/.env" "$DESKTOP_DIR/dist/packaged.env"');
+    }
+
+    const writerSource = readFileSync(writePackagedEnvPath, "utf8");
+    expect(writerSource).toContain('blockedKeys = new Set(["MEMMY_GA4_API_SECRET"])');
+    expect(writerSource).toContain('requiredKeys = new Set(["MEMMY_CLOUD_SERVICE"])');
   });
 });
 

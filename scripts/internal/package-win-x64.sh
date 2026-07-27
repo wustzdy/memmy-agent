@@ -491,6 +491,7 @@ npm_with_configured_script_shell run build --prefix "$AGENT_DIR"
 log "Building Electron desktop shell"
 npm_with_configured_script_shell run build -w @memmy/desktop
 write_desktop_edition_manifest
+node "$ROOT_DIR/scripts/internal/write-packaged-env.mjs" "$ROOT_DIR/.env" "$DESKTOP_DIR/dist/packaged.env"
 
 log "Preparing Windows x64 packaged runtime"
 rm -rf "$RUNTIME_DIR"

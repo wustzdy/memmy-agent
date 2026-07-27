@@ -1,38 +1,19 @@
 /** Ga4 client module. */
-import { ProxyAgent } from "undici";
+import { resolveCloudServiceBaseUrl } from "@memmy/local-api-contracts";
 
-const GA4_ENDPOINT = "https://www.google-analytics.com/mp/collect";
-
-function createProxyDispatcher(proxyUrl: string): ProxyAgent {
-  const url = new URL(proxyUrl);
-  if (url.protocol === "socks5:" || url.protocol === "socks5h:") {
-    throw new Error("MEMMY_GA4_PROXY only supports http:// or https:// proxy URLs");
-  }
-  return new ProxyAgent(proxyUrl);
-}
-
-let proxyDispatcher: ProxyAgent | undefined;
-let proxyResolved = false;
-
-function getProxyDispatcher(): ProxyAgent | undefined {
-  if (proxyResolved) return proxyDispatcher;
-  proxyResolved = true;
-  const proxyUrl = process.env.MEMMY_PROXY_SERVER ?? process.env.MEMMY_GA4_PROXY;
-  if (proxyUrl) {
-    console.log("[analytics] using GA4 proxy:", proxyUrl);
-    proxyDispatcher = createProxyDispatcher(proxyUrl);
-  }
-  return proxyDispatcher;
-}
+const DESKTOP_ANALYTICS_PROXY_PATH = "/api/analytics/desktop/events";
 
 export interface Ga4Config {
-  measurementId: string;
-  apiSecret: string;
+  /** Cloud service base URL that proxies desktop analytics to GA4. */
+  cloudServiceBaseUrl: string;
+  /** Timeout ms. */
+  timeoutMs: number;
 }
 
 export interface Ga4Event {
   name: string;
   params?: Record<string, string | number | boolean>;
+  eventTimeMillis?: number;
 }
 
 export interface SendGa4EventsOptions {
@@ -45,39 +26,67 @@ export interface SendGa4EventsOptions {
 
 export async function sendGa4Events(opts: SendGa4EventsOptions): Promise<void> {
   const { config, clientId, events, appEnv } = opts;
-  const url = `${GA4_ENDPOINT}?measurement_id=${config.measurementId}&api_secret=${config.apiSecret}`;
-  const timeoutMs = Number.parseInt(process.env.MEMMY_GA4_TIMEOUT_MS ?? "5000", 10);
-  const dispatcher = getProxyDispatcher();
-  const debugMode = Boolean(process.env.MEMMY_GA4_DEBUG);
+  const url = `${normalizeBaseUrl(config.cloudServiceBaseUrl)}${DESKTOP_ANALYTICS_PROXY_PATH}`;
 
   const enrichedEvents = events.map((event, index) => ({
-    name: event.name,
+    eventName: event.name,
     params: {
       ...event.params,
-      engagement_time_msec: index === 0 ? 100 : 1,
-      ...(appEnv ? { app_env: appEnv } : {}),
-      ...(debugMode ? { debug_mode: 1 } : {})
-    }
+      engagement_time_msec: index === 0 ? 100 : 1
+    },
+    ...(event.eventTimeMillis === undefined ? {} : { eventTimeMillis: event.eventTimeMillis })
   }));
 
   const payload = {
-    client_id: clientId,
-    non_personalized_ads: true,
+    clientId,
+    ...(appEnv ? { appEnv } : {}),
     events: enrichedEvents
   };
 
-  await fetch(url, {
+  const response = await fetch(url, {
     method: "POST",
     headers: { "content-type": "application/json", "connection": "close" },
     body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(timeoutMs),
-    ...(dispatcher ? { dispatcher } : {})
+    signal: AbortSignal.timeout(config.timeoutMs)
   });
+  const envelope = await readCloudEnvelope(response);
+
+  if (!response.ok || envelope.code !== 0) {
+    throw new Error(envelope.message || `Analytics proxy request failed with HTTP ${response.status}`);
+  }
 }
 
-export function resolveGa4Config(): Ga4Config | undefined {
-  const measurementId = process.env.MEMMY_GA4_MEASUREMENT_ID;
-  const apiSecret = process.env.MEMMY_GA4_API_SECRET;
-  if (!measurementId || !apiSecret) return undefined;
-  return { measurementId, apiSecret };
+export function resolveGa4Config(env: NodeJS.ProcessEnv = process.env): Ga4Config | undefined {
+  try {
+    return {
+      cloudServiceBaseUrl: resolveCloudServiceBaseUrl(env.MEMMY_CLOUD_SERVICE),
+      timeoutMs: Number.parseInt(env.MEMMY_GA4_TIMEOUT_MS ?? env.MEMMY_CLOUD_TIMEOUT_MS ?? "5000", 10)
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+interface CloudEnvelope {
+  code: number;
+  message?: string;
+}
+
+async function readCloudEnvelope(response: Response): Promise<CloudEnvelope> {
+  try {
+    const value = await response.json() as Partial<CloudEnvelope>;
+    return {
+      code: typeof value.code === "number" ? value.code : response.ok ? 0 : response.status,
+      message: typeof value.message === "string" ? value.message : undefined
+    };
+  } catch {
+    return {
+      code: response.ok ? 0 : response.status,
+      message: response.ok ? "ok" : `Analytics proxy request failed with HTTP ${response.status}`
+    };
+  }
+}
+
+function normalizeBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "");
 }

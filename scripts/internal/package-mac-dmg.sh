@@ -529,6 +529,7 @@ npm run build -w @memmy/memory
 npm --prefix "$AGENT_DIR" run build
 npm run build -w @memmy/desktop
 write_desktop_edition_manifest
+node "$ROOT_DIR/scripts/internal/write-packaged-env.mjs" "$ROOT_DIR/.env" "$DESKTOP_DIR/dist/packaged.env"
 
 rm -rf "$RUNTIME_DIR"
 rm -rf "$DMG_HELPER_DIR"
