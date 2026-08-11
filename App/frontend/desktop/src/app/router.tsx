@@ -21,7 +21,7 @@ import {
   type ProductTourStepInfo,
   type ProductTourTab
 } from "./product-tour.js";
-import { GlobalUpdateDialog } from "./update-coordinator.js";
+import { GlobalPreparedUpdateToast, GlobalUpdateDialog } from "./update-coordinator.js";
 import {
   clearDeferredGuidanceStep,
   clearProductTourStep,
@@ -304,6 +304,15 @@ export function AppRouter(props: { onRetry: () => void }) {
           }}
         />
       )}
+      <GlobalPreparedUpdateToast
+        suspended={
+          isPetWindowContext
+          || Boolean(petGuideRequest)
+          || tokenModalOpen
+          || workspaceGuidanceStep === "product_tour"
+          || workspaceGuidanceStep === "nickname"
+        }
+      />
       <GlobalUpdateDialog
         suspended={
           isPetWindowContext

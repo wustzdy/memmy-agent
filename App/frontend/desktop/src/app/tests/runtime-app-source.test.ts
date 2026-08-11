@@ -50,6 +50,7 @@ describe("RuntimeApp bootstrap loading", () => {
     expect(appSource).toContain("<UpdateCoordinatorProvider>");
     expect(appSource).toContain("<AgentRuntimeBridge taskStateCoordinator={taskStateCoordinator ?? undefined}>");
     expect(appSource.indexOf("<UpdateCoordinatorProvider>")).toBeLessThan(appSource.indexOf("<AppRouter onRetry={retry} />"));
+    expect(routerSource).toContain("<GlobalPreparedUpdateToast");
     expect(routerSource).toContain("<GlobalUpdateDialog");
     expect(routerSource).toContain("isPetWindowContext\n          || Boolean(petGuideRequest)\n          || tokenModalOpen");
     expect(routerSource).toContain('|| workspaceGuidanceStep === "product_tour"');

@@ -454,6 +454,35 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
         if (disposed) {
           return;
         }
+        if (result.status === "available" && result.preparedUpdatePath) {
+          const version = result.latestVersion ?? result.currentVersion;
+          commitUpdateState(() => ({
+            phase: "prepared",
+            result,
+            preparedUpdatePath: result.preparedUpdatePath ?? null,
+            downloadProgress: null,
+            feedback: { key: "settings.about.silentReady", values: { version } },
+            dialog: isForceUpdate(result) ? "install-confirm" : null
+          }));
+          return;
+        }
+        if (result.status === "available" && isForceUpdate(result)) {
+          const version = result.latestVersion ?? result.currentVersion;
+          commitUpdateState(() => ({
+            phase: "available",
+            result,
+            preparedUpdatePath: null,
+            downloadProgress: null,
+            feedback: result.downloadUrl
+              ? { key: "settings.about.updateReady", values: { version } }
+              : { key: "settings.about.updateAvailableNoLink", values: { version } },
+            dialog: result.downloadUrl ? "download-confirm" : null
+          }));
+          return;
+        }
+        if (result.status === "available" && result.updateMode === "silent") {
+          return;
+        }
         const notificationContext = notificationContextRef.current;
         const plan = decideUpdateNotification({
           enabled: notificationContext.enabled,
@@ -489,7 +518,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
       clearTimeout(firstCheckTimer);
       clearInterval(intervalTimer);
     };
-  }, [requestUpdateResult, startupReady]);
+  }, [commitUpdateState, requestUpdateResult, startupReady]);
 
   const value = useMemo<UpdateCoordinatorContextValue>(() => ({
     appVersion,
@@ -516,6 +545,44 @@ export function useUpdateCoordinator(): UpdateCoordinatorValue {
   return useUpdateCoordinatorContext();
 }
 
+/** Renders a low-interruption prepared update reminder above route content. */
+export function GlobalPreparedUpdateToast(props: { suspended?: boolean }) {
+  const update = useUpdateCoordinatorContext();
+  const { t } = useTranslation();
+  if (
+    props.suspended
+    || update.dialog
+    || update.phase !== "prepared"
+    || !update.result
+    || !update.preparedUpdatePath
+    || isForceUpdate(update.result)
+  ) {
+    return null;
+  }
+
+  const version = update.result.latestVersion ?? update.result.currentVersion;
+  return (
+    <div className="fixed bottom-4 right-4 z-40 w-[min(360px,calc(100vw-2rem))] rounded-2xl border border-action-sky/30 bg-background-paper/95 p-3 shadow-[0_18px_48px_rgba(28,32,30,0.18)] backdrop-blur-md">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-pill bg-action-sky shadow-[0_0_0_5px_rgba(49,190,166,0.13)]" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="text-sm font-medium text-text-ink">{t("settings.about.preparedToastTitle")}</div>
+          <div className="text-xs leading-relaxed text-text-ink/55">
+            {t("settings.about.preparedToastDesc", { version })}
+          </div>
+          <button
+            type="button"
+            onClick={() => void update.requestPrimaryAction()}
+            className="mt-1 inline-flex items-center rounded-btn bg-action-sky px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-action-sky-hover"
+          >
+            {t("settings.about.restartToUpdate")}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Renders the update dialog above route-specific pages. */
 export function GlobalUpdateDialog(props: { suspended?: boolean }) {
   const update = useUpdateCoordinatorContext();
@@ -534,10 +601,10 @@ export function GlobalUpdateDialog(props: { suspended?: boolean }) {
       message={(
         <div className="space-y-2 text-left">
           <p>
-            {installReady
-              ? t("settings.about.preparedUpdateConfirmDesc", { currentVersion: update.result.currentVersion })
-              : forced
+            {forced
               ? t("settings.about.forceUpdateConfirmDesc", { currentVersion: update.result.currentVersion })
+              : installReady
+              ? t("settings.about.preparedUpdateConfirmDesc", { currentVersion: update.result.currentVersion })
               : t("settings.about.updateConfirmDesc", { currentVersion: update.result.currentVersion })}
           </p>
           {update.result.releaseNotes && (
@@ -547,7 +614,9 @@ export function GlobalUpdateDialog(props: { suspended?: boolean }) {
       )}
       cancelLabel={t("settings.about.updateConfirmCancel")}
       closeLabel={t("common.close")}
-      confirmLabel={installReady
+      confirmLabel={forced
+        ? t("settings.about.forceUpdateConfirmOk")
+        : installReady
         ? t("settings.about.preparedUpdateConfirmOk")
         : t("settings.about.updateConfirmOk")}
       ariaLabel={t("settings.about.updateConfirmTitle", { version })}
