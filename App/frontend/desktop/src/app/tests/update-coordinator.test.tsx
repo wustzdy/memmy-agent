@@ -2,11 +2,13 @@
 
 /** App-level update coordinator tests. */
 import type { DesktopUpdateDownloadProgress, DesktopUpdateInstallResult } from "@memmy/desktop-interface";
-import { act, useState } from "react";
+import { act, useEffect, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "../../i18n/i18n-provider.js";
-import { AppStateProvider } from "../../state/app-state.js";
+import { mockBootstrap } from "../../pages/tests/fixtures/bootstrap.js";
+import { appActions } from "../../state/app-actions.js";
+import { AppStateProvider, useAppState } from "../../state/app-state.js";
 import {
   GlobalUpdateDialog,
   UpdateCoordinatorProvider,
@@ -30,6 +32,65 @@ describe("UpdateCoordinatorProvider", () => {
     document.body.replaceChildren();
     Reflect.deleteProperty(window, "memmy");
     vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  it("downloads default managed updates in the background without opening the install dialog", async () => {
+    vi.useFakeTimers();
+    let resolveDownload!: (result: DesktopUpdateInstallResult) => void;
+    const downloadPromise = new Promise<DesktopUpdateInstallResult>((resolve) => {
+      resolveDownload = resolve;
+    });
+    const checkForUpdates = vi.fn(async () => ({
+      status: "available" as const,
+      currentVersion: "2.1.0",
+      latestVersion: "2.2.0",
+      downloadUrl: "https://updates.example.com/Memmy.dmg"
+    }));
+    const downloadUpdate = vi.fn(() => downloadPromise);
+    const notifyUpdateAvailable = vi.fn(async () => undefined);
+    setDesktopBridge({
+      platform: "darwin",
+      getAppInfo: vi.fn(async () => ({
+        name: "Memmy",
+        version: "2.1.0",
+        platform: "darwin",
+        arch: "arm64"
+      })),
+      checkForUpdates,
+      downloadUpdate,
+      notifyUpdateAvailable
+    });
+
+    await act(async () => {
+      root.render(
+        <AppStateProvider>
+          <I18nProvider language="zh-CN">
+            <UpdateCoordinatorProvider>
+              <BootstrappedUpdateHarness />
+            </UpdateCoordinatorProvider>
+          </I18nProvider>
+        </AppStateProvider>
+      );
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(checkForUpdates).toHaveBeenCalledTimes(1);
+    expect(downloadUpdate).toHaveBeenCalledTimes(1);
+    expect(readOutput("phase")).toBe("downloading");
+    expect(readOutput("feedback-key")).toBe("settings.about.silentDownloading");
+    expect(notifyUpdateAvailable).not.toHaveBeenCalled();
+
+    await act(async () => {
+      resolveDownload({ filePath: "/tmp/Memmy-2.2.0.dmg", opened: false });
+      await downloadPromise;
+    });
+    expect(readOutput("phase")).toBe("prepared");
+    expect(readOutput("prepared-path")).toBe("/tmp/Memmy-2.2.0.dmg");
+    expect(readOutput("feedback-key")).toBe("settings.about.silentReady");
+    expect(queryButtonByText("重启安装")).toBeNull();
   });
 
   it("keeps downloading across route content changes and reopens the prepared installer dialog", async () => {
@@ -41,7 +102,8 @@ describe("UpdateCoordinatorProvider", () => {
       status: "available" as const,
       currentVersion: "2.1.0",
       latestVersion: "2.2.0",
-      downloadUrl: "https://updates.example.com/Memmy.dmg"
+      downloadUrl: "https://updates.example.com/Memmy.dmg",
+      updateMode: "manual" as const
     }));
     const downloadUpdate = vi.fn(() => downloadPromise);
     setDesktopBridge({
@@ -112,6 +174,7 @@ describe("UpdateCoordinatorProvider", () => {
       currentVersion: "2.1.0",
       latestVersion: "2.2.0",
       downloadUrl: "https://updates.example.com/Memmy.dmg",
+      updateMode: "manual" as const,
       preparedUpdatePath: "/tmp/Memmy-2.2.0.dmg"
     }));
     const openUpdateInstaller = vi.fn(async () => {
@@ -187,7 +250,8 @@ describe("UpdateCoordinatorProvider", () => {
         status: "available" as const,
         currentVersion: "2.1.0",
         latestVersion: "2.2.0",
-        downloadUrl: "https://updates.example.com/Memmy.dmg"
+        downloadUrl: "https://updates.example.com/Memmy.dmg",
+        updateMode: "manual" as const
       })),
       downloadUpdate: vi.fn(() => downloadPromise),
       onUpdateDownloadProgress
@@ -266,6 +330,15 @@ function UpdateHarness() {
   );
 }
 
+function BootstrappedUpdateHarness() {
+  const { dispatch } = useAppState();
+  useEffect(() => {
+    dispatch(appActions.bootstrapLoaded(mockBootstrap, "/settings"));
+  }, [dispatch]);
+
+  return <UpdateHarness />;
+}
+
 function setDesktopBridge(bridge: Partial<NonNullable<Window["memmy"]>>): void {
   Object.defineProperty(window, "memmy", {
     configurable: true,
@@ -281,10 +354,14 @@ function getButtonByLabel(label: string): HTMLButtonElement {
 }
 
 function getButtonByText(text: string): HTMLButtonElement {
-  const button = Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-    .find((candidate) => candidate.textContent === text);
+  const button = queryButtonByText(text);
   expect(button).not.toBeNull();
   return button!;
+}
+
+function queryButtonByText(text: string): HTMLButtonElement | null {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+    .find((candidate) => candidate.textContent === text) ?? null;
 }
 
 function readOutput(label: string): string {

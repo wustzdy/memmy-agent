@@ -678,11 +678,13 @@ describe("desktop packaged runtime boundaries", () => {
     expect(mainSource).toContain("async function clearPreparedRequiredUpdate");
     expect(mainSource).toContain("function isRequiredUpdate(update: DesktopUpdateCheckResult)");
     expect(mainSource).toContain("function isManagedBackgroundUpdate(update: DesktopUpdateCheckResult)");
-    expect(mainSource).toContain('update.updateMode === "silent" || isRequiredUpdate(update)');
+    expect(mainSource).toContain('update.updateMode !== "manual" || isRequiredUpdate(update)');
     expect(mainSource).toContain("preparedManagedBackgroundUpdateVersion");
     expect(mainSource).toContain("await hasPreparedRequiredUpdate(update)");
     expect(mainSource).toContain("const preparedFilePath = update.preparedUpdatePath ?? (await downloadUpdate(update, { openInstaller: false })).filePath");
     expect(mainSource).toContain("await writePreparedRequiredUpdate(update, preparedFilePath)");
+    expect(mainSource).toContain("if (isManagedBackgroundUpdate(update))");
+    expect(mainSource).toContain("await writePreparedRequiredUpdate(update, filePath)");
     expect(mainSource).toContain("async function installPreparedRequiredUpdateOnQuit");
     expect(mainSource).toContain("await installPreparedRequiredUpdateOnQuit()");
     expect(mainSource).toContain("openAfterInstall: false");
@@ -715,7 +717,7 @@ describe("desktop packaged runtime boundaries", () => {
     expect(mainSource).toContain("showUpdatePrompt: shouldShowWindowsUpdatePromptForPreparedUpdate(update)");
     expect(mainSource).toContain("showUpdatePrompt: preparedUpdate.showUpdatePrompt === true");
     expect(mainSource).toContain("function shouldShowWindowsUpdatePromptForPreparedUpdate");
-    expect(mainSource).toContain('update.updateMode === "silent" && !isRequiredUpdate(update)');
+    expect(mainSource).toContain('update.updateMode !== "manual" && !isRequiredUpdate(update)');
     expect(mainSource).toContain("options.showUpdatePrompt");
     expect(mainSource).toContain("await clearWindowsUpdatePromptMarker().catch(() => undefined)");
     expect(mainSource).toContain('$promptMarkerPath = "$MarkerPath.prompt"');

@@ -1672,10 +1672,10 @@ function isPreparedRequiredUpdate(value: unknown): value is PreparedRequiredUpda
  * Determines whether a prepared Windows update should prompt the user the next time they click the icon.
  *
  * @param update Update check result.
- * @returns True for a normal silent update; forced updates exit without any UI.
+ * @returns True for a normal managed update; forced and manual updates exit without this prompt.
  */
 function shouldShowWindowsUpdatePromptForPreparedUpdate(update: DesktopUpdateCheckResult): boolean {
-  return update.updateMode === "silent" && !isRequiredUpdate(update);
+  return update.updateMode !== "manual" && !isRequiredUpdate(update);
 }
 
 /**
@@ -1834,10 +1834,10 @@ function isRequiredUpdate(update: DesktopUpdateCheckResult): boolean {
  * Determines whether the update should be prepared in the background by the main process.
  *
  * @param update The update check result.
- * @returns True for a silent update or a forced update.
+ * @returns True unless the manifest explicitly requests a manual update.
  */
 function isManagedBackgroundUpdate(update: DesktopUpdateCheckResult): boolean {
-  return update.updateMode === "silent" || isRequiredUpdate(update);
+  return update.updateMode !== "manual" || isRequiredUpdate(update);
 }
 
 /**
@@ -1888,6 +1888,9 @@ async function downloadUpdate(
       console.warn("mac update package staging skipped:", error);
       await writePackagedStartupLog(`mac-update-stage skipped\n${formatStartupError(error)}`);
     });
+    if (isManagedBackgroundUpdate(update)) {
+      await writePreparedRequiredUpdate(update, filePath);
+    }
     return { filePath, opened: false };
   }
 

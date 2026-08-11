@@ -53,6 +53,11 @@ interface UpdateCoordinatorState {
   dialog: UpdateDialogKind;
 }
 
+interface UpdateDownloadBehavior {
+  showPreparedDialog?: boolean;
+  downloadingFeedbackKey?: MessageKey;
+}
+
 interface UpdateCoordinatorContextValue extends UpdateCoordinatorValue {
   result: DesktopUpdateCheckResult | null;
   dialog: UpdateDialogKind;
@@ -179,13 +184,18 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
     return request;
   }, [appVersion]);
 
-  const downloadUpdate = useCallback(async (update: DesktopUpdateCheckResult): Promise<void> => {
+  const downloadUpdate = useCallback(async (
+    update: DesktopUpdateCheckResult,
+    behavior: UpdateDownloadBehavior = {}
+  ): Promise<void> => {
     if (downloadInFlightRef.current) {
       await downloadInFlightRef.current;
       return;
     }
 
     const version = update.latestVersion ?? update.currentVersion;
+    const showPreparedDialog = behavior.showPreparedDialog ?? true;
+    const downloadingFeedbackKey = behavior.downloadingFeedbackKey ?? "settings.about.downloadingUpdate";
     if (!update.downloadUrl) {
       commitUpdateState((current) => ({
         ...current,
@@ -216,7 +226,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
       preparedUpdatePath: null,
       downloadProgress: null,
       dialog: null,
-      feedback: { key: "settings.about.downloadingUpdate", values: { version } }
+      feedback: { key: downloadingFeedbackKey, values: { version } }
     }));
 
     const request = bridge.downloadUpdate(update, { openInstaller: false });
@@ -237,7 +247,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
         preparedUpdatePath: installResult.filePath,
         downloadProgress: null,
         feedback: { key: "settings.about.silentReady", values: { version } },
-        dialog: "install-confirm"
+        dialog: showPreparedDialog ? "install-confirm" : null
       }));
     } catch (error) {
       if (!mountedRef.current) {
@@ -373,8 +383,16 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
           preparedUpdatePath: result.preparedUpdatePath ?? null,
           downloadProgress: null,
           feedback: { key: "settings.about.silentReady", values: { version } },
-          dialog: "install-confirm"
+          dialog: shouldUseSilentPreparedUpdateFlow(result) ? null : "install-confirm"
         }));
+        return;
+      }
+
+      if (shouldUseSilentPreparedUpdateFlow(result) && result.downloadUrl) {
+        await downloadUpdate(result, {
+          showPreparedDialog: false,
+          downloadingFeedbackKey: "settings.about.silentDownloading"
+        });
         return;
       }
 
@@ -402,7 +420,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
         dialog: null
       }));
     }
-  }, [commitUpdateState, requestUpdateResult]);
+  }, [commitUpdateState, downloadUpdate, requestUpdateResult]);
 
   const requestPrimaryAction = useCallback(async (): Promise<void> => {
     const current = updateStateRef.current;
@@ -462,7 +480,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
             preparedUpdatePath: result.preparedUpdatePath ?? null,
             downloadProgress: null,
             feedback: { key: "settings.about.silentReady", values: { version } },
-            dialog: isForceUpdate(result) ? "install-confirm" : null
+            dialog: shouldUseSilentPreparedUpdateFlow(result) ? null : "install-confirm"
           }));
           return;
         }
@@ -480,7 +498,13 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
           }));
           return;
         }
-        if (result.status === "available" && result.updateMode === "silent") {
+        if (result.status === "available" && shouldUseSilentPreparedUpdateFlow(result)) {
+          if (result.downloadUrl) {
+            await downloadUpdate(result, {
+              showPreparedDialog: false,
+              downloadingFeedbackKey: "settings.about.silentDownloading"
+            });
+          }
           return;
         }
         const notificationContext = notificationContextRef.current;
@@ -518,7 +542,7 @@ export function UpdateCoordinatorProvider(props: { children: ReactNode }) {
       clearTimeout(firstCheckTimer);
       clearInterval(intervalTimer);
     };
-  }, [commitUpdateState, requestUpdateResult, startupReady]);
+  }, [commitUpdateState, downloadUpdate, requestUpdateResult, startupReady]);
 
   const value = useMemo<UpdateCoordinatorContextValue>(() => ({
     appVersion,
@@ -678,4 +702,8 @@ function resolveUpdateInstallResultMessageKey(
 
 function isForceUpdate(update: DesktopUpdateCheckResult): boolean {
   return update.force === true || update.updateMode === "force";
+}
+
+function shouldUseSilentPreparedUpdateFlow(update: DesktopUpdateCheckResult): boolean {
+  return update.updateMode !== "manual" && !isForceUpdate(update);
 }
